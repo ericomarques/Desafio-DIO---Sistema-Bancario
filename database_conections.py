@@ -39,3 +39,37 @@ class DataBaseOperations(DataBaseConnect):
                 return f"{key} atualizado para {new_value}"
             else:
                 return "Erro na transação"
+            
+class BankSystem:
+    def __init__(self):
+        self._users = {}
+        self._accounts = {}
+        self._next_account_number = 1
+
+    def create_user(self, nome_completo, cpf, data_nascimento, endereco):
+        if cpf in self._users:
+            return f"Erro: CPF {cpf} já cadastrado."
+        self._users[cpf] = {
+            "nome_completo": nome_completo,
+            "data_nascimento": data_nascimento,
+            "endereco": endereco
+        }
+        return f"Usuário {nome_completo} cadastrado com sucesso."
+
+    def create_account(self, cpf):
+        if cpf not in self._users:
+            return "Erro: Usuário não encontrado."
+        account_number = f"{self._next_account_number:04}"
+        self._next_account_number += 1
+        if cpf not in self._accounts:
+            self._accounts[cpf] = []
+        self._accounts[cpf].append({
+            "agencia": "0001",
+            "conta_corrente": account_number
+        })
+        return f"Conta {account_number} criada para CPF {cpf}."
+
+    def list_accounts_by_cpf(self, cpf):
+        if cpf not in self._accounts:
+            return "Nenhuma conta encontrada para este CPF."
+        return self._accounts[cpf]
