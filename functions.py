@@ -1,17 +1,67 @@
+import datetime
 import textwrap
 from abc import ABC, ABCMeta, abstractclassmethod, abstractproperty
-import datetime
+from pathlib import Path
+
+ROOT_PATH = Path(__file__).parent
+
+
+def log_transaction(func):
+    def envelope(*args, **kwargs):
+        result = func(*args, **kwargs)
+        date_time = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+        with open(ROOT_PATH / "log.txt", "a") as file:
+            file.write(
+                f"""[{date_time}] 
+                Função '{func.__name__}' executada. 
+                Argumentos: args:[{args}], kwargs: [{kwargs}].
+                Retornou {result}\n\n"""
+            )
+        return result
+
+    return envelope
+
+
+class InterAccounts:
+    def __init__(self, account):
+        self.account = account
+        self._index = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        try:
+            account = self.account[self._index]
+            return f"""
+                Agência:\t{account.agency}
+                Número:\t{account.number}
+                Titular:\t{account.client.name}
+                Saldo:\t\tR$ {account.balance:.2f}
+            """
+        except IndexError:
+            raise StopIteration
+        finally:
+            self._index += 1
+
 
 class Client:
-    def __init__(self, address:str):
+    def __init__(self, address: str):
         self.address = address
         self.accounts = []
+        self.account_index = 0
 
     def realize_transaction(self, account, transaction):
+        if len(account.history.transactions_of_day()) >= 10:
+            print("\n--- Número de transações diárias excedido! ---")
+            return
+
         transaction.register(account)
-    
+
     def add_account(self, account):
         self.accounts.append(account)
+
 
 class PessoaFisica(Client):
     def __init__(self, name, born_date, cpf, address):
@@ -19,91 +69,108 @@ class PessoaFisica(Client):
         self.name = name
         self.born_date = born_date
         self.cpf = cpf
-    
+
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__}: ('{self.cpf}')>"
+
+
 class Account:
     def __init__(self, number, client):
         self._balance = 0
         self._number = number
-        self._agency = '0001'
+        self._agency = "0001"
         self._client = client
         self._history = History()
 
     @classmethod
     def new_account(cls, client, number):
         return cls(number, client)
-    
+
     @property
     def number(self):
         return self._number
-    
+
     @property
     def agency(self):
         return self._agency
-    
+
     @property
     def client(self):
         return self._client
-    
+
     @property
     def history(self):
         return self._history
-    
+
     def withdrawal(self, value):
         balance = self._balance
         exceeded_balance = value > balance
 
         if exceeded_balance:
-            print('\n--- Operação negada! Saldo insuficiente  ---')
+            print("\n--- Operação negada! Saldo insuficiente  ---")
 
         elif value > 0:
             self._balance -= value
-            print('\n *** Saque realizado com sucesso! ***')
+            print("\n *** Saque realizado com sucesso! ***")
             return True
-        
+
         else:
-            print('\n--- Operação falhou. O valor informado é inválido! ---')
+            print("\n--- Operação falhou. O valor informado é inválido! ---")
 
         return False
-    
+
     def deposit(self, value):
-        if value>0:
+        if value > 0:
             self._balance += value
-            print('\n*** Depósito realizado com sucesso! ***')
+            print("\n*** Depósito realizado com sucesso! ***")
         else:
-            print('\n --- Operação falhou. O valor informado é inválido! --- ')
+            print("\n --- Operação falhou. O valor informado é inválido! --- ")
             return False
 
         return True
 
+
 class ContaCorrente(Account):
-    def __init__(self, number, client, limit = 500, withdrawal_limit = 3):
+    def __init__(self, number, client, limit=500, withdrawal_limit=3):
         super().__init__(number, client)
         self.limit = limit
         self.withdrawal_limit = withdrawal_limit
 
     def withdrawal(self, value):
         withdrawal_number = len(
-            [transaction for transaction in self.history.transactions if transaction['type'] == Witdrawal.__name__]
+            [
+                transaction
+                for transaction in self.history.transactions
+                if transaction["type"] == Witdrawal.__name__
+            ]
         )
 
         exceeded_limit = value > self.limit
         exceeded_withdrawal = withdrawal_number >= self.withdrawal_limit
 
         if exceeded_limit:
-            print('\n--- Operação negada. O valor solicitado excede o limite por transação ---')
+            print(
+                "\n--- Operação negada. O valor solicitado excede o limite por transação ---"
+            )
         elif exceeded_withdrawal:
-            print('\n--- Operação negada. O número de saques diários excedido. Tente amanhã novamente! ---')
+            print(
+                "\n--- Operação negada. O número de saques diários excedido. Tente amanhã novamente! ---"
+            )
         else:
             return super().withdrawal(value)
-        
+
         return False
 
     def __str__(self):
-        return f'''
+        return f"""
             Agência:\t{self.agency}
             C/C:\t\t{self.number}
             Titular:\t{self.client.name}
-        '''
+        """
+
+    def __repr__(self):
+        return f"<{self.__class__.__name__}: ('{self.agency}', '{self.number}', '{self.client.name}')>"
+
 
 class History:
     def __init__(self):
@@ -112,15 +179,35 @@ class History:
     @property
     def transactions(self):
         return self._transactions
-    
+
     def add_transaction(self, transaction):
         self._transactions.append(
             {
-                'type': transaction.__class__.__name__,
-                'value': transaction.value,
-                'date': datetime.datetime.now().strftime("%d-%m-%Y %H:%M:%S")
+                "type": transaction.__class__.__name__,
+                "value": transaction.value,
+                "date": datetime.datetime.utcnow().strftime("%d-%m-%Y %H:%M:%S"),
             }
         )
+
+    def generate_report(self, transaction_type=None):
+        for transaction in self._transactions:
+            if (
+                transaction_type is None
+                or transaction["type"].lower() == transaction_type.lower()
+            ):
+                yield transaction
+
+    def transactions_of_day(self):
+        currently_date = datetime.datetime.utcnow().date()
+        transactions = []
+        for transaction in self.transactions:
+            date_transaction = datetime.datetime.strptime(
+                transaction["date"], "%d-%m-%Y %H:%M:%S"
+            ).date()
+            if currently_date == date_transaction:
+                transactions.append(transaction)
+        return transactions
+
 
 class Transaction(ABC):
     @property
@@ -132,6 +219,7 @@ class Transaction(ABC):
     def register(self, account):
         pass
 
+
 class Withdrawal(Transaction):
     def __init__(self, value):
         self._value = value
@@ -139,12 +227,13 @@ class Withdrawal(Transaction):
     @property
     def value(self):
         return self._value
-    
+
     def register(self, account):
         transaction_succeed = account.withdraw(self.value)
 
         if transaction_succeed:
             account.history.add_transaction(self)
+
 
 class Deposit(Transaction):
     def __init__(self, value):
@@ -153,12 +242,13 @@ class Deposit(Transaction):
     @property
     def value(self):
         return self._value
-    
+
     def register(self, account):
         transaction_succeed = account.deposit(self.value)
 
-        if  transaction_succeed:
+        if transaction_succeed:
             account.history.add_transaction(self)
+
 
 class ClientManager:
     @staticmethod
@@ -169,62 +259,67 @@ class ClientManager:
     @staticmethod
     def get_client_account(client):
         if not client.account:
-            print('\n --- Cliente não foi encontrado ---')
+            print("\n --- Cliente não foi encontrado ---")
             return
         return client.account[0]
-    
+
     def return_filtered_client(self, clients):
-        cpf = input('Por favor informe o cpf do cliente:\n>')
+        cpf = input("Por favor informe o cpf do cliente:\n>")
         return self.filter_client(cpf, clients)
-    
+
+    @log_transaction
     def create_client(self, clients):
-        cpf = input('Por favor informe o cpf do cliente:\n>')
+        cpf = input("Por favor informe o cpf do cliente:\n>")
         client = self.filter_client(cpf, clients)
         if client:
-            print('\n--- CPF já cadastrado! ---')
+            print("\n--- CPF já cadastrado! ---")
             return
-        
-        name = input('Favor informar o nome completo: ')
-        born_date = input("Por favor informe a data de nascimento (dd-mm-aaaa): ")
-        address = input("Também informe o endereço (logradouro, nro - bairro - cidade/sigla estado):\n>")
 
-        client = PessoaFisica(name = name, born_date = born_date, address = address, cpf= cpf)
+        name = input("Favor informar o nome completo: ")
+        born_date = input("Por favor informe a data de nascimento (dd-mm-aaaa): ")
+        address = input(
+            "Também informe o endereço (logradouro, nro - bairro - cidade/sigla estado):\n>"
+        )
+
+        client = PessoaFisica(name=name, born_date=born_date, address=address, cpf=cpf)
 
         clients.append(client)
-        print('\n--- Cliente criado com sucessso! ---')
+        print("\n--- Cliente criado com sucessso! ---")
 
 
 class MenuManager(ClientManager):
     def __init__(self):
         super().__init__()
 
+    @log_transaction
     def deposit(self, clients):
         client = super().return_filtered_client(clients)
         if not client:
-            print('\n--- Cliente não encontrado ---')
+            print("\n--- Cliente não encontrado ---")
             return
-        value = float(input('Por favor informe o valor do depósito: R$ '))
+        value = float(input("Por favor informe o valor do depósito: R$ "))
         transaction = Deposit(value)
 
         account = super().get_client_account(client)
         if not account:
             return
-        
+
         client.realize_transaction(account, transaction)
 
+    @log_transaction
     def withdrawal(self, clients):
         client = self.return_filtered_client(clients)
         if not client:
-            print('\n--- Cliente não encontrado ---')
+            print("\n--- Cliente não encontrado ---")
             return
-        
+
         account = self.get_client_account(client)
         if not account:
-            print('\n--- Conta não encontrada para o cliente ---')
+            print("\n--- Conta não encontrada para o cliente ---")
             return
-        
+
         try:
-            value = float(input('Por favor informe o valor do saque: R$ '))
+            value = float(input("Por favor informe o valor do saque: R$ "))
             if value <= 0:
                 raise ValueError("O valor deve ser positivo.")
         except ValueError as e:
@@ -235,16 +330,17 @@ class MenuManager(ClientManager):
         client.realize_transaction(account, transaction)
 
         if account.balance >= value:
-            print('\n*** Saque realizado com sucesso! ***')
+            print("\n*** Saque realizado com sucesso! ***")
         else:
-            print('\n--- Saque não realizado. Verifique o saldo e tente novamente. ---')
+            print("\n--- Saque não realizado. Verifique o saldo e tente novamente. ---")
 
+    @log_transaction
     def show_extrato(self, clients):
         client = super().return_filtered_client(clients)
         if not client:
-            print('\n--- Cliente não encontrado ---')
+            print("\n--- Cliente não encontrado ---")
             return
-        
+
         account = super().get_client_account(client)
         if not account:
             return
@@ -253,11 +349,13 @@ class MenuManager(ClientManager):
         transactions = account.history.transactions
 
         extrato = ""
+        has_extrato = False
+        for transaction in account.history.generate_report():
+            has_extrato = True
+            extrato += f"\n{transaction['date']}\n{transaction['type']}:\n\tR$ {transaction['value']:.2f}"
+
         if not transactions:
             extrato = "Não foram realizadas movimentações."
-        else:
-            for transaction in transactions:
-                extrato += f"\n{transaction['type']}:\n\tR$ {transaction['value']:.2f}"
 
         print(extrato)
         print(f"\nSaldo:\n\tR$ {account.balance:.2f}")
@@ -266,28 +364,30 @@ class MenuManager(ClientManager):
     def account_create(account_number, clients, accounts):
         client = super().return_filtered_client(clients)
         if not client:
-            print('\n--- Cliente não encontrado, operação encerrada! ---')
+            print("\n--- Cliente não encontrado, operação encerrada! ---")
             return
-        
-        account = ContaCorrente.new_account(client= client, number=account_number)
+
+        account = ContaCorrente.new_account(client=client, number=account_number)
         accounts.append(account)
         client.accounts.append(account)
 
-        print('\n*** Conta criada com sucesso! ***')  
-        return accounts  
-    
+        print("\n*** Conta criada com sucesso! ***")
+        return accounts
+
     @staticmethod
     def account_list(accounts):
-        for account in accounts:
-            print('=' * 100)
+        for account in InterAccounts(accounts):
+            print("=" * 100)
             print(textwrap.dedent(str(account)))
+
 
 class System(MenuManager):
     def __init__(self):
         super().__init__()
         self._clients = []
         self._accounts = []
-        self._menu = textwrap.dedent("""
+        self._menu = textwrap.dedent(
+            """
             [D]\tDepositar
             [S]\tSacar
             [E]\tExtrato
@@ -295,8 +395,9 @@ class System(MenuManager):
             [LC]\tListar Contas
             [CU]\tCriar usuário 
             [Q]\tSair
-            ==>""")
-        
+            ==>"""
+        )
+
     def menu(self):
         return input(self._menu)
 
@@ -305,49 +406,59 @@ class System(MenuManager):
         while True:
             choice = self.menu().lower()
 
-            if choice == 'd':
+            if choice == "d":
                 self.deposit(self._clients)
 
-            elif choice == 's':
+            elif choice == "s":
                 self.withdrawal(self._clients)
-            
-            elif choice == 'e':
+
+            elif choice == "e":
                 self.show_extrato(self._clients)
-            
+
             elif choice == "cc":
-                account_number = len(self._accounts)+1
+                account_number = len(self._accounts) + 1
                 client = super().return_filtered_client(self._clients)
                 if not client:
-                    print('\n--- Cliente não encontrado, operação encerrada! ---')
+                    print("\n--- Cliente não encontrado, operação encerrada! ---")
                     return
-            
-                account = ContaCorrente.new_account(client= client, number=account_number)
+
+                account = ContaCorrente.new_account(
+                    client=client, number=account_number
+                )
                 self._accounts.append(account)
                 client.accounts.append(account)
-                print('\n*** Conta criada com sucesso! ***') 
+                print("\n*** Conta criada com sucesso! ***")
 
             elif choice == "lc":
                 self.account_list(self._accounts)
-            
-            elif choice ==  "cu":
-                cpf = input('Por favor informe o cpf do cliente:\n>')
+
+            elif choice == "cu":
+                cpf = input("Por favor informe o cpf do cliente:\n>")
                 client = self.filter_client(cpf, self._clients)
                 if client:
-                    print('\n--- CPF já cadastrado! ---')
+                    print("\n--- CPF já cadastrado! ---")
                     return
-        
-                name = input('Favor informar o nome completo: ')
-                born_date = input("Por favor informe a data de nascimento (dd-mm-aaaa): ")
-                address = input("Também informe o endereço (logradouro, nro - bairro - cidade/sigla estado):\n>")
 
-                client = PessoaFisica(name = name, born_date = born_date, address = address, cpf= cpf)
+                name = input("Favor informar o nome completo: ")
+                born_date = input(
+                    "Por favor informe a data de nascimento (dd-mm-aaaa): "
+                )
+                address = input(
+                    "Também informe o endereço (logradouro, nro - bairro - cidade/sigla estado):\n>"
+                )
+
+                client = PessoaFisica(
+                    name=name, born_date=born_date, address=address, cpf=cpf
+                )
 
                 self._clients.append(client)
-                print('\n*** Cliente criado com sucessso! ***')
+                print("\n*** Cliente criado com sucessso! ***")
 
-            elif choice == 'q':
-                print('\nMuito obrigado por usar nosso sistema!')
+            elif choice == "q":
+                print("\nMuito obrigado por usar nosso sistema!")
                 break
 
             else:
-                print('\nOperação inválida. Por favor selecione novamente uma opção válida.')
+                print(
+                    "\nOperação inválida. Por favor selecione novamente uma opção válida."
+                )

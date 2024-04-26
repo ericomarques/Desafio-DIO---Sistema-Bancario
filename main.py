@@ -1,9 +1,10 @@
 from functions import System
 
+
 def main():
-    system =  System()
+    system = System()
     system.start()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
